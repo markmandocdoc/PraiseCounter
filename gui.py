@@ -2,11 +2,6 @@
 
 import tkMessageBox
 from Tkinter import *
-from Tkinter import Tk
-from Tkinter import Frame
-from Tkinter import Label
-from Tkinter import Scrollbar
-from Tkinter import Text
 import threading
 import datetime
 import sys
@@ -144,7 +139,11 @@ class Gui(threading.Thread):
 
     def confirm_quit(self):
         if tkMessageBox.askokcancel("Quit", "Do you really wish to quit?"):
+            self.log("Closing application. Please wait ...")
+            self.root.update()
             self.is_running = False
+            while self.bot.driver is not None:
+                pass
             self.root.destroy()
 
     def run(self):

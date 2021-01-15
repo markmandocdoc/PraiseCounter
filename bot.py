@@ -19,9 +19,10 @@ class Bot(threading.Thread):
         # Bot settings
         self._initial_page = "https://teams.microsoft.com/_#/apps/a2da8768-95d5-419e-9441-3b539865b118/search?q="
         self._server_base = "http://boxofmarkers.com/tools/praise/"
+        self._countdown = 0
+        self._duplicate_threshold = 5
         self._refresh_minutes_low = 7
         self._refresh_minutes_high = 10
-        self._refresh_running = False
         self._implicit_wait_seconds = 10
         self._secret_key = ""
 
@@ -37,6 +38,13 @@ class Bot(threading.Thread):
         self.driver = None
 
     def init_secret_key(self):
+        """
+        Initialize secret key. Secret key is used to allow access
+        to web server. Without secret key, web server will not allow
+        updating or adding to database. Secret key is found in
+        private message of web server owner using #secret_key keyword.
+        Refer to READ_ME for more information regarding setup.
+        """
         search_input_field = ""
 
         while self.gui.is_running:
@@ -52,7 +60,7 @@ class Bot(threading.Thread):
                 if not self.gui.log("ERROR: Browser closed before secret key initialized"):
                     return
             break
-        if self.gui.is_running is not True:
+        if not self.gui.is_running:
             return
 
         search_input_field.send_keys('#secret_key')
@@ -76,6 +84,16 @@ class Bot(threading.Thread):
         self.gui.secret_key_initialized = True
 
     def verify_praise(self, praiser_name, praised_name, praise_text):
+        """
+        Verify valid praise clicked on search panel. Uses xpath and
+        input parameters to validate the clicked search result is
+        a valid praise. Will not find xpath if praise invalid.
+        :param praiser_name: string name of praiser
+        :param praised_name: string name of praised
+        :param praise_text: string partial sub string of praise
+            text. Will be used to differentiate with other praises
+        :return: boolean True if valid praise and False if invalid
+        """
         try:
             self.driver.find_element_by_xpath(
                 "//div[@class='card-body']//div[@class='ac-container']//div[@class='ac-textBlock'][1]"
@@ -91,6 +109,16 @@ class Bot(threading.Thread):
         return True
 
     def do_add_praise(self, time_value, praiser_name, praised_name):
+        """
+        Send data to web server. Web server attempts to add praise
+        information to database. Handles errors based on data received.
+        Web server results returned and displayed in gui.
+        :param time_value: string time of praise
+        :param praiser_name: string first and last name of praiser
+        :param praised_name: string first and last name of praised
+        :return: string web server results. Returns 1 if successful
+            add to database. Returns 2 if duplicate found.
+        """
         server_base = self._server_base
         add_praise = "add_praise.php"
         parameters = "?s=" + self._secret_key + "&t=" + time_value + "&r=" + praiser_name + "&d=" + praised_name
@@ -110,7 +138,10 @@ class Bot(threading.Thread):
         return r.content
 
     def do_update_time(self):
-        if self.gui.is_running is not True:
+        """
+        Update last refresh on web server
+        """
+        if not self.gui.is_running:
             return
         server_base = self._server_base
         script = "update_time.php"
@@ -120,15 +151,25 @@ class Bot(threading.Thread):
         self.gui.log("Time updated - Status code: {}\n".format(r.status_code))
 
     def do_refresh(self):
-        # Refresh search results
+        """
+        Refresh list of praises by performing search on Teams.
+        Refresh performed to check if new praises have been
+        given or if bot is unable to find search result elements.
+        """
         search_input = self.driver.find_element_by_xpath("//input[@id='searchInputField']")
         search_input.clear()
         search_input.send_keys("got praise!")
         search_input.send_keys(Keys.ENTER)
 
     def do_update(self):
+        """
+        Main automation logic. Search result entries clicked starting
+        from most recent and moving down until 'duplicate_threshold'
+        value reached. Will attempt to add praise if verified valid.
+        After 'duplicate_threshold' reached, gui status loop started.
+        """
         duplicate_count = 0
-        duplicate_threshold = 5
+        duplicate_threshold = self._duplicate_threshold
         search_result_index = 1
 
         # Refresh search results
@@ -221,7 +262,7 @@ class Bot(threading.Thread):
                     continue
                 else:
                     break
-            if self.gui.is_running is not True:
+            if not self.gui.is_running:
                 return
 
             time_element = selected_element.find_element_by_xpath(
@@ -238,9 +279,6 @@ class Bot(threading.Thread):
                     result = self.do_add_praise(time_value, praiser_name, name)
             else:
                 result = self.do_add_praise(time_value, praiser_name, praised_name)
-
-            # Short sleep to allow server calls to complete
-            time.sleep(1)
 
             # Increase duplicate count by 1 if duplicate
             if result == "2":
@@ -266,7 +304,7 @@ class Bot(threading.Thread):
         seconds_high = self._refresh_minutes_high * 60
         num_seconds = randrange(seconds_low, seconds_high)
         self.gui.countdown = num_seconds
-        self._refresh_running = False
+        self._countdown = num_seconds
 
         if not self.gui.log("Next refresh in {} seconds\n".format(num_seconds)):
             return
@@ -274,19 +312,28 @@ class Bot(threading.Thread):
         if not self.gui.is_running:
             return
         else:
-            self.check_app_status()
+            self.check_gui_status()
 
-    def check_app_status(self):
-        if self.gui.is_running:
-            if self.gui.countdown <= 0:
-                if not self._refresh_running:
-                    self._refresh_running = True
-                    self.do_update()
-            else:
-                threading.Timer(1, self.check_app_status).start()
+    def check_gui_status(self):
+        """
+        Thread loop to keep thread alive. Uses gui.is_running
+        variable to decide whether or not to stop looping.
+        """
+        while self.gui.is_running:
+            if self._countdown > 0:
+                time.sleep(1)
+                self._countdown = self._countdown - 1
+                continue
+            self.do_update()
+            break
         return
 
     def run(self):
+        """
+        Run method for bot threading object. Will remain alive
+        while gui is alive using gui.is_running variable. When
+        gui is no longer alive, run log reaches end and quits.
+        """
         # Initialize chromedriver object
         # Will download required chromedriver
         self.chromedriver = Chromedriver()
@@ -302,13 +349,15 @@ class Bot(threading.Thread):
         self.driver = webdriver.Chrome(self.chromedriver.filepath, chrome_options=options)
         self.driver.get(self._initial_page)
 
-        # Try catch required in case page still loading
+        # Check if gui running in case closed before setting value
         if self.gui.is_running:
             self.driver.implicitly_wait(self._implicit_wait_seconds)
         else:
             return
 
-        self._refresh_running = True
+        # Start update process. Gui loop starts when complete.
+        # Gui loop keeps run thread alive. Ends when gui not running.
+        # Init secret key needs to be performed before refresh.
         self.init_secret_key()
         self.do_update()
 

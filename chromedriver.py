@@ -150,10 +150,6 @@ class Chromedriver:
             with zipfile.ZipFile(archive) as zip_file:
                 zip_file.extract(self.chromedriver_filename, chromedriver_dir)
 
-        # If chromedriver exists and chromedriver is correct version
-        else:
-            print "Chromedriver " + chromedriver_version + " already installed."
-
         # Set chromedriver version after correct version identified
         self.version = chromedriver_version
 

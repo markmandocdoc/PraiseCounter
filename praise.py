@@ -10,7 +10,6 @@ def main():
     gui = Gui()
 
     # Initialize and run bot. Bot contains Selenium automation.
-    # Will also initialize circular reference between gui and bot
     # Circular reference required for gui and bot to communicate
     bot = Bot()
 
@@ -21,6 +20,7 @@ def main():
 
     # Start automation
     bot.start()
+
 
 if __name__ == '__main__':
     main()
