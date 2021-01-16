@@ -2,7 +2,7 @@
 
 from random import randrange
 from selenium import webdriver
-from selenium.common.exceptions import InvalidSessionIdException, NoSuchElementException
+from selenium.common.exceptions import *
 from selenium.webdriver.common.keys import Keys
 from chromedriver import Chromedriver
 import threading
@@ -12,22 +12,54 @@ import os
 
 
 class Bot(threading.Thread):
+    """
+    Bot contains attributes and logic for Selenium automation.
+    Attributes handle when the bot starts and stops. Chromedriver
+    class used to validate and update installed chromedriver.
+    Gui reference used to check if gui is still running.
+    """
 
     def __init__(self):
         threading.Thread.__init__(self)
 
         # Bot settings
+        # Initial page loaded by driver is Teams search page
         self._initial_page = "https://teams.microsoft.com/_#/apps/a2da8768-95d5-419e-9441-3b539865b118/search?q="
+
+        # Url of web server containing PHP scripts
         self._server_base = "http://boxofmarkers.com/tools/praise/"
+
+        # Integer value of time till next refresh of search results
+        # Value is set after 'do_update()' completes scraping results.
+        # Reduces by 1 every second in gui loop while gui is running.
+        # If gui is no longer running, bot ends gui loop and thread.
         self._countdown = 0
-        self._duplicate_threshold = 5
+
+        # Max number of praises to skip until next refresh.
+        # During 'do_update()', an attempt is made to add praise.
+        # If praise exists, 'duplicate_count' increases by one.
+        # 'do_update()' ends when count is equal to threshold
+        self._duplicate_threshold = 3
+
+        # Before scraping, search results are refreshed with new
+        # entries. Refresh time is a random number between
+        # '_refresh_minutes_low' and '_refresh_minutes_high'.
         self._refresh_minutes_low = 7
         self._refresh_minutes_high = 10
+
+        # Implicit wait for Selenium. Driver will attempt to contact
+        # element for '_implicit_wait_seconds' amount of time until
+        # the attempt is cancelled and exception is thrown.
         self._implicit_wait_seconds = 10
+
+        # String used as a password to use PHP scripts on web server.
+        # Stored in web server owners private messages on Teams and
+        # scraped by bot using a key phrase in search bar.
         self._secret_key = ""
 
-        # Reference to gui in bot. Allows bi-directional
-        # communication between bot and gui objects
+        # Reference to gui in bot. Allows checking status of each
+        # other from within each others object. Used to check if
+        # gui is still running and driver still exists.
         self.gui = None
 
         # Chromedriver object contains logic to check current
@@ -46,29 +78,27 @@ class Bot(threading.Thread):
         Refer to READ_ME for more information regarding setup.
         """
         search_input_field = ""
-
         while self.gui.is_running:
             try:
                 search_input_field = self.driver.find_element_by_xpath("//input[@id='searchInputField']")
                 search_input_field.clear()
+                search_input_field.send_keys('#secret_key')
+                search_input_field.send_keys(Keys.ENTER)
             except NoSuchElementException:
-                if not self.gui.log("ERROR: Search bar not found. Retrying in 1 second ..."):
-                    return
+                self.gui.log("ERROR: Search bar not found. Retrying in 1 second ...\n")
                 time.sleep(1)
                 continue
             except AttributeError:
-                if not self.gui.log("ERROR: Browser closed before secret key initialized"):
-                    return
+                self.gui.log("ERROR: Secret key initialization failed. Element not found.\n")
+                return
+            except WebDriverException:
+                self.gui.log("ERROR: Secret key initialization failed. Chrome not reachable.\n")
+                return
             break
-        if not self.gui.is_running:
-            return
-
-        search_input_field.send_keys('#secret_key')
-        search_input_field.send_keys(Keys.ENTER)
 
         while self.gui.is_running:
             try:
-                if not self.gui.log("Initializing secret key\n"):
+                if not self.gui.log("Initializing secret key ... "):
                     return
                 # Get secret API key
                 search_result_text = self.driver.find_element_by_xpath(
@@ -76,12 +106,25 @@ class Bot(threading.Thread):
                     '/../..//div[contains(@class,"search-chat-body")]').text
                 self._secret_key = search_result_text.split('#secret_key:')[1]
             except NoSuchElementException:
-                if not self.gui.log("ERROR: Secret key not found. Retrying in 1 second ...\n"):
-                    return
+                self.gui.log("failure\n", False)
+                self.gui.log("ERROR: Secret key not found. Retrying in 1 second ...\n")
                 time.sleep(1)
                 continue
+            except AttributeError:
+                self.gui.log("failure\n", False)
+                self.gui.log("ERROR: Secret key private message not found.\n")
+                return
+            except NoSuchWindowException:
+                self.gui.log("failure\n", False)
+                self.gui.log("ERROR: Window closed before secret key can be located.\n")
+                return
+            except WebDriverException:
+                self.gui.log("failure\n", False)
+                self.gui.log("ERROR: Secret key could not be be initialized. Chrome not reachable.\n")
+                return
             break
         self.gui.secret_key_initialized = True
+        self.gui.log("successful\n", False)
 
     def verify_praise(self, praiser_name, praised_name, praise_text):
         """
@@ -139,7 +182,7 @@ class Bot(threading.Thread):
 
     def do_update_time(self):
         """
-        Update last refresh on web server
+        Update last refresh on web server. Fails if gui not running.
         """
         if not self.gui.is_running:
             return
@@ -155,11 +198,28 @@ class Bot(threading.Thread):
         Refresh list of praises by performing search on Teams.
         Refresh performed to check if new praises have been
         given or if bot is unable to find search result elements.
+        :returns
         """
-        search_input = self.driver.find_element_by_xpath("//input[@id='searchInputField']")
-        search_input.clear()
-        search_input.send_keys("got praise!")
-        search_input.send_keys(Keys.ENTER)
+        try:
+            self.gui.log("Refreshing ... ")
+            search_input = self.driver.find_element_by_xpath("//input[@id='searchInputField']")
+            search_input.clear()
+            search_input.send_keys("got praise!")
+            search_input.send_keys(Keys.ENTER)
+            self.gui.log("successful\n", False)
+        except NoSuchWindowException:
+            self.gui.log("failure\n", False)
+            self.gui.log("ERROR: Unable to refresh search results. Window has been closed.\n")
+            return False
+        except WebDriverException:
+            self.gui.log("failure\n", False)
+            self.gui.log("ERROR: Unable to refresh search results. Send keys failed.\n")
+            return False
+        except AttributeError:
+            self.gui.log("failure\n", False)
+            self.gui.log("ERROR: Unable to refresh search results. Search field not found.\n")
+            return False
+        return True
 
     def do_update(self):
         """
@@ -167,13 +227,15 @@ class Bot(threading.Thread):
         from most recent and moving down until 'duplicate_threshold'
         value reached. Will attempt to add praise if verified valid.
         After 'duplicate_threshold' reached, gui status loop started.
+        :returns boolean True if update completes successfully
         """
         duplicate_count = 0
         duplicate_threshold = self._duplicate_threshold
         search_result_index = 1
 
-        # Refresh search results
-        self.do_refresh()
+        # Refresh search results. If search results fail, return False.
+        if not self.do_refresh():
+            return
 
         while self.gui.is_running:
 
@@ -184,6 +246,9 @@ class Bot(threading.Thread):
                         .format(search_result_index))
                     self.driver.execute_script("arguments[0].scrollIntoView();", search_result)
                     search_result.click()
+                except NoSuchWindowException:
+                    self.gui.log("ERROR: Praise update failed. Window has been closed.\n")
+                    return
                 except Exception as e:
                     print "Exception: " + str(e)
                     if not self.gui.log("ERROR: Could not reach element. Refreshing ... \n"):
@@ -212,7 +277,10 @@ class Bot(threading.Thread):
                 "//div[@class='search-content']/div[{}]"
                 "//div[contains(@class,'search-chat-body')]"
                 .format(search_result_index))
-            text_value = str(search_result_text.text)
+
+            # UnicodeEncodeError exception found with character u'\u2019'
+            # Caused by casting search_result_text.text to string
+            text_value = search_result_text.text
 
             # First name found in left panel search results
             praised_first_name = text_value.split()[0]
@@ -244,6 +312,7 @@ class Bot(threading.Thread):
                 search_result_index += 1
                 continue
 
+            # Praise name initialized before loop to suppress warning
             praised_name = ""
             selected_element = None
             while self.gui.is_running:
@@ -299,34 +368,34 @@ class Bot(threading.Thread):
         # Update last updated time
         self.do_update_time()
 
-        # Repeat action every low to high minutes
+        # Calculate next refresh time based on attributes.
+        # Random value between low and high used for countdown.
         seconds_low = self._refresh_minutes_low * 60
         seconds_high = self._refresh_minutes_high * 60
         num_seconds = randrange(seconds_low, seconds_high)
         self.gui.countdown = num_seconds
         self._countdown = num_seconds
 
-        if not self.gui.log("Next refresh in {} seconds\n".format(num_seconds)):
-            return
+        self.gui.log("Next refresh in {} seconds\n".format(num_seconds))
 
-        if not self.gui.is_running:
-            return
-        else:
-            self.check_gui_status()
+        return True
 
-    def check_gui_status(self):
+    def start_bot_loop(self):
         """
         Thread loop to keep thread alive. Uses gui.is_running
-        variable to decide whether or not to stop looping.
+        variable to decide whether or not to stop looping. Will
+        not run loop gui if secret key not initialized.
         """
         while self.gui.is_running:
+            if self._secret_key == "":
+                self.gui.log("ERROR: Secret key not initialized. Stopping bot thread.\n")
+                return
             if self._countdown > 0:
                 time.sleep(1)
                 self._countdown = self._countdown - 1
                 continue
-            self.do_update()
-            break
-        return
+            if not self.do_update():
+                break
 
     def run(self):
         """
@@ -334,10 +403,19 @@ class Bot(threading.Thread):
         while gui is alive using gui.is_running variable. When
         gui is no longer alive, run log reaches end and quits.
         """
+
+        # Start bot console messages.
+        # Temporary delay added to wait for gui to load.
+        # Adding buttons will fix this later.
+        time.sleep(1)
+        if not self.gui.log("Initializing chromedriver ... "):
+            return
+
         # Initialize chromedriver object
         # Will download required chromedriver
         self.chromedriver = Chromedriver()
-        if not self.gui.log("Chromedriver " + str(self.chromedriver.version) + " installed\n"):
+
+        if not self.gui.log(str(self.chromedriver.version) + " installed\n", False):
             return
 
         # Initialize driver options
@@ -345,9 +423,19 @@ class Bot(threading.Thread):
         options.add_argument("user-data-dir=" + os.getenv("LOCALAPPDATA") + "\\Google\\Chrome\\User Data")
         options.add_argument("user-profile=Default")
 
-        # Initialize driver
-        self.driver = webdriver.Chrome(self.chromedriver.filepath, chrome_options=options)
-        self.driver.get(self._initial_page)
+        # Initialize driver. If Chrome browser already open, catch
+        # InvalidArgumentException and write error to log
+        try:
+            self.driver = webdriver.Chrome(self.chromedriver.filepath, chrome_options=options)
+            self.driver.get(self._initial_page)
+        except InvalidArgumentException:
+            self.gui.log("ERROR: Close all Chrome browsers and restart application\n")
+            self.driver = None
+            return
+        except SessionNotCreatedException:
+            self.driver = None
+            self.gui.log("ERROR: Session not created. Driver failed to initialize\n")
+            return
 
         # Check if gui running in case closed before setting value
         if self.gui.is_running:
@@ -355,14 +443,15 @@ class Bot(threading.Thread):
         else:
             return
 
-        # Start update process. Gui loop starts when complete.
-        # Gui loop keeps run thread alive. Ends when gui not running.
         # Init secret key needs to be performed before refresh.
         self.init_secret_key()
-        self.do_update()
+
+        # Start update process. Gui loop starts after secret key init.
+        # Gui loop keeps run thread alive. Ends when gui not running.
+        self.start_bot_loop()
 
         # When run ends, thread ends. Clean driver
         self.driver.quit()
 
-        # Set driver to default status
+        # Set driver to default state
         self.driver = None

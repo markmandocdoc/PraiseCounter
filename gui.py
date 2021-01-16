@@ -9,6 +9,12 @@ import os
 
 
 class Gui(threading.Thread):
+    """
+    Gui class contains tkinter gui attributes and logic.
+    When gui closed, is_running flag set to false to end
+    bot actions when possible. Gui remains open until
+    bot thread reaches end of run and sets driver to None.
+    """
     def __init__(self):
         threading.Thread.__init__(self)
 
@@ -16,11 +22,11 @@ class Gui(threading.Thread):
         # communication between gui and bot objects
         self.bot = None
 
-        # Auto checks this variable to see status
+        # Bot checks this variable to see status
         self.is_running = True
         self.secret_key_initialized = False
 
-        # Setup frame
+        # Setup root
         self.root = Tk()
         self.root.geometry("+50+50")
         self.root.resizable(0, 0)
@@ -29,6 +35,7 @@ class Gui(threading.Thread):
         self.root.attributes('-topmost', True)
         self.root.protocol('WM_DELETE_WINDOW', self.confirm_quit)
 
+        # Setup frame
         self.root.frame = Frame(self.root, bd=0)
         self.root.frame.pack(expand=1)
 
@@ -101,11 +108,23 @@ class Gui(threading.Thread):
         self.countdown_label.configure(text=countdown_text)
         self.root.after(1000, self.update_countdown)
 
-    def log(self, text):
+    def log(self, text, timestamp=True):
+        """
+        Add text to gui console log given string parameter.
+        :param text: string text to be added to gui console
+        :param timestamp: boolean is timestamp added to text
+        :return: boolean True if gui is running, otherwise
+            return False. If required in case gui has been
+            closed and bot attempts to add to log.
+        """
         if not self.is_running:
             return False
 
-        text = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + " : " + text
+        # Add timestamp to beginning of text string
+        if timestamp:
+            text = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + " : " + text
+
+        # Enable text area, add text, move cursor to end, disable text area
         self.enable(self.console_text_area)
         self.console_text_area.insert("insert", text)
         self.console_text_area.see("end")
@@ -138,13 +157,26 @@ class Gui(threading.Thread):
             print "Widget not found"
 
     def confirm_quit(self):
+        """
+        Handle gui close logic. Sets 'is_running' variable to
+        False. When bot sees gui is no longer running, bot
+        begins closing thread process and driver is set to None.
+        Root is destroyed once bot thread has ended gracefully.
+        """
         if tkMessageBox.askokcancel("Quit", "Do you really wish to quit?"):
             self.log("Closing application. Please wait ...")
+            # Update required to show message in console log
             self.root.update()
             self.is_running = False
+            # self.root.after(100, self.close_gui_loop)
             while self.bot.driver is not None:
                 pass
             self.root.destroy()
+
+    # def close_gui_loop(self):
+    #     if self.bot.driver is None and not self.bot.is_alive():
+    #         return
+    #     self.root.after(100, self.close_gui_loop)
 
     def run(self):
         """
