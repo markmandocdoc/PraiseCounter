@@ -9,6 +9,14 @@ import re
 
 
 class Chromedriver:
+    """
+    Chromedriver handles necessary logic to use correct
+    chromedriver version required for installed Chrome
+    browser. If incorrect chromedriver installed, correct
+    chromedriver downloaded, unzipped, and installed based
+    on current Chrome browser installed using registry data.
+    """
+
     def __init__(self):
         # Expected filename to be used for chromedriver
         self.chromedriver_filename = "chromedriver.exe"

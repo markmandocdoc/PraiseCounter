@@ -5,6 +5,9 @@ from gui import Gui
 
 
 def main():
+    """
+    Praise Counter main module
+    """
 
     # Initialize and run gui. Gui contains console and buttons.
     gui = Gui()
