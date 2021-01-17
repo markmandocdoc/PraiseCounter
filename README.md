@@ -9,6 +9,18 @@ to display a user front-end with values and statistics.
 - Requests
 - Tkinter
 
+## Setup
+To set secret key:
+1. Open Teams
+2. Navigate to Calendar
+3. Select Meet Now and start a meeting
+4. Select Show Conversation
+5. Enter secret key into chat using format:
+
+```buildoutcfg
+#secret_key:SECRET_KEY_USED_TO_ALLOW_WEB_SERVER_ACCESS
+```
+
 ## Executable:
 To build EXE:
 1. Install pyinstaller

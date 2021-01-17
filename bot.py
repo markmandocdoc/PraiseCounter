@@ -4,6 +4,7 @@ from random import randrange
 from selenium import webdriver
 from selenium.common.exceptions import *
 from selenium.webdriver.common.keys import Keys
+from urllib3.exceptions import MaxRetryError
 from chromedriver import Chromedriver
 import threading
 import requests
@@ -29,6 +30,9 @@ class Bot(threading.Thread):
         # Url of web server containing PHP scripts
         self._server_base = "http://boxofmarkers.com/tools/praise/"
 
+        # Name of server owner. Will be used to find secret key
+        self._server_owner = "Mark Mandocdoc"
+
         # Integer value of time till next refresh of search results
         # Value is set after 'do_update()' completes scraping results.
         # Reduces by 1 every second in gui loop while gui is running.
@@ -42,8 +46,8 @@ class Bot(threading.Thread):
         self._duplicate_threshold = 3
 
         # Before scraping, search results are refreshed with new
-        # entries. Refresh time is a random number between
-        # '_refresh_minutes_low' and '_refresh_minutes_high'.
+        # entries. Refresh time is a random number of minutes
+        # between '_refresh_minutes_low' and '_refresh_minutes_high'.
         self._refresh_minutes_low = 7
         self._refresh_minutes_high = 10
 
@@ -77,7 +81,6 @@ class Bot(threading.Thread):
         private message of web server owner using #secret_key keyword.
         Refer to READ_ME for more information regarding setup.
         """
-        search_input_field = ""
         while self.gui.is_running:
             try:
                 search_input_field = self.driver.find_element_by_xpath("//input[@id='searchInputField']")
@@ -100,11 +103,10 @@ class Bot(threading.Thread):
             try:
                 if not self.gui.log("Initializing secret key ... "):
                     return
-                # Get secret API key
                 search_result_text = self.driver.find_element_by_xpath(
-                    '//div[@class="search-content"]//span[contains(text(),"Mark Mandocdoc")]'
-                    '/../..//div[contains(@class,"search-chat-body")]').text
-                self._secret_key = search_result_text.split('#secret_key:')[1]
+                    "//div[@class='search-content']//span[contains(text(),'" + self._server_owner + "')]"
+                    "/../..//div[contains(@class,'search-chat-body')]").text
+                self._secret_key = search_result_text.split("#secret_key:")[1]
             except NoSuchElementException:
                 self.gui.log("failure\n", False)
                 self.gui.log("ERROR: Secret key not found. Retrying in 1 second ...\n")
@@ -146,8 +148,11 @@ class Bot(threading.Thread):
                 "//span[contains(text(),'Praise')]"
                 .format(praiser_name, praised_name, praise_text)
             )
+        except InvalidSessionIdException:
+            self.gui.log("Praise verification failed. Invalid session ID. Stopping bot.\n")
+            return False
         except NoSuchElementException:
-            self.gui.log("Invalid Praise. Moving to next message.\n")
+            self.gui.log("Invalid Praise. Moving to next search result.\n")
             return False
         return True
 
@@ -168,7 +173,7 @@ class Bot(threading.Thread):
         r = requests.get(server_base + add_praise + parameters, headers={"User-Agent": "Chrome"})
 
         if r.content == "2":
-            print_text = "Duplicate Praise. Moving to next message.\n"
+            print_text = "Duplicate Praise. Moving to next search result.\n"
         elif r.content == "1":
             print_text = "New Praise. Database has been updated.\n"
         elif r.status_code != 200:
@@ -186,22 +191,25 @@ class Bot(threading.Thread):
         """
         if not self.gui.is_running:
             return
-        server_base = self._server_base
+
+        self.gui.log("Updating last refresh ... ")
         script = "update_time.php"
         parameters = "?s=" + self._secret_key
-        r = requests.get(server_base + script + parameters, headers={"User-Agent": "Chrome"})
-
-        self.gui.log("Time updated - Status code: {}\n".format(r.status_code))
+        r = requests.get(self._server_base + script + parameters, headers={"User-Agent": "Chrome"})
+        if str(r.status_code) == "200":
+            self.gui.log("successful\n", False)
+        else:
+            self.gui.log("failure\n", False)
 
     def do_refresh(self):
         """
         Refresh list of praises by performing search on Teams.
         Refresh performed to check if new praises have been
         given or if bot is unable to find search result elements.
-        :returns
+        :return boolean False if exception thrown
         """
         try:
-            self.gui.log("Refreshing ... ")
+            self.gui.log("Updating search results ... ")
             search_input = self.driver.find_element_by_xpath("//input[@id='searchInputField']")
             search_input.clear()
             search_input.send_keys("got praise!")
@@ -227,60 +235,74 @@ class Bot(threading.Thread):
         from most recent and moving down until 'duplicate_threshold'
         value reached. Will attempt to add praise if verified valid.
         After 'duplicate_threshold' reached, gui status loop started.
-        :returns boolean True if update completes successfully
+        :return boolean True if update completes successfully
         """
         duplicate_count = 0
         duplicate_threshold = self._duplicate_threshold
         search_result_index = 1
+        search_result_max = 0
 
         # Refresh search results. If search results fail, return False.
         if not self.do_refresh():
             return
 
+        # Element variables used for looping through search results
+        praiser_name = ""
+        text_value = ""
+
         while self.gui.is_running:
 
             while self.gui.is_running:
                 try:
+
                     search_result = self.driver.find_element_by_xpath(
                         "//div[@class='search-content']/div[{}]/div[contains(@data-tid, 'search-content-item')]"
                         .format(search_result_index))
                     self.driver.execute_script("arguments[0].scrollIntoView();", search_result)
+
                     search_result.click()
-                except NoSuchWindowException:
-                    self.gui.log("ERROR: Praise update failed. Window has been closed.\n")
+
+                    search_result_name = self.driver.find_element_by_xpath(
+                        "//div[@class='search-content']/div[{}]//div[contains(@class,'search-chat-entry-name-time')]"
+                        "/span[contains(@class,'user-name')]".format(search_result_index)
+                    )
+
+                    # Full name of praiser taken from main full panel
+                    praiser_name = str(search_result_name.text)
+
+                    search_result_text = self.driver.find_element_by_xpath(
+                        "//div[@class='search-content']/div[{}]"
+                        "//div[contains(@class,'search-chat-body')]"
+                        .format(search_result_index))
+
+                    # UnicodeEncodeError exception found with character u'\u2019'
+                    # Caused by casting search_result_text.text to string
+                    text_value = search_result_text.text
+
+                except MaxRetryError:
+                    # Target machine actively refused connection
                     return
-                except Exception as e:
-                    print "Exception: " + str(e)
-                    if not self.gui.log("ERROR: Could not reach element. Refreshing ... \n"):
-                        break
-                    time.sleep(1)
-                    self.do_refresh()
+                except NoSuchWindowException:
+                    self.gui.log("Error: Praise update failed. Window has been closed.\n")
+                    return
+                except WebDriverException:
+                    self.gui.log("Error: Praise update failed. Chrome not reachable.\n")
+                    return
+                except AttributeError:
+                    if not self.gui.log("Error: Could not reach element. Refreshing search results.\n"):
+                        return
+                    if not self.do_refresh():
+                        return
                     continue
+
+                # Break from while loop after selected message from left panel
+                # search results successfully found in right panel
                 break
-            if not self.gui.is_running:
-                return
-
-            search_result_name = self.driver.find_element_by_xpath(
-                "//div[@class='search-content']/div[{}]//div[contains(@class,'search-chat-entry-name-time')]"
-                "/span[contains(@class,'user-name')]".format(search_result_index)
-            )
-
-            # Full name of praiser taken from main full panel
-            praiser_name = str(search_result_name.text)
 
             # Issue found with users marked for deletion
             # Need to remove the marked for deletion text in bracket
             # Partition used because no error thrown if pattern not found
             praiser_name = praiser_name.partition(" [Marked ")[0]
-
-            search_result_text = self.driver.find_element_by_xpath(
-                "//div[@class='search-content']/div[{}]"
-                "//div[contains(@class,'search-chat-body')]"
-                .format(search_result_index))
-
-            # UnicodeEncodeError exception found with character u'\u2019'
-            # Caused by casting search_result_text.text to string
-            text_value = search_result_text.text
 
             # First name found in left panel search results
             praised_first_name = text_value.split()[0]
@@ -295,6 +317,7 @@ class Bot(threading.Thread):
             text_value = text_value.split(" {}".format(praised_first_name))[0]
             text_value_length = len(text_value)
 
+            # Change text value length if too long or too short
             if text_value_length >= 20:
                 text_value_length = 20
             elif 6 <= text_value_length < 20:
@@ -312,34 +335,51 @@ class Bot(threading.Thread):
                 search_result_index += 1
                 continue
 
-            # Praise name initialized before loop to suppress warning
+            # Variables initialized before loop to suppress warnings
+            # Element variables contain driver element objects
             praised_name = ""
-            selected_element = None
-            while self.gui.is_running:
+            time_value = ""
+
+            # While loop to verify 'praised_name' set successfully.
+            # Variable required to add praise properly to server.
+            while praised_name == "":
                 # Order matters for the variables and xpath
                 # Element must end with first name to get selected name
-                selected_element = self.driver.find_element_by_xpath(
-                    "//div[@class='card-body']//div[@class='ac-container']//div[@class='ac-textBlock'][1]"
-                    "/p[contains(text(),'{}')]/../../div"
-                    "//p[contains(text(),'{}')]/../../div[3]"
-                    "/p[contains(text(),'{}')]"
-                    .format(praiser_name, text_value, praised_first_name)
-                )
-                praised_name = selected_element.text
-                if praised_name == "":
-                    time.sleep(1)
-                    continue
-                else:
-                    break
+                try:
+
+                    selected_element = self.driver.find_element_by_xpath(
+                        "//div[@class='card-body']//div[@class='ac-container']//div[@class='ac-textBlock'][1]"
+                        "/p[contains(text(),'{}')]/../../div"
+                        "//p[contains(text(),'{}')]/../../div[3]"
+                        "/p[contains(text(),'{}')]"
+                        .format(praiser_name, text_value, praised_first_name)
+                    )
+                    praised_name = selected_element.text
+
+                    time_element = selected_element.find_element_by_xpath(
+                        "./../../../../../../../../../../../../../../../../../../../"
+                        "/div/div/div/span[@data-tid='messageTimeStamp']")
+                    time_value = time_element.get_attribute("title")
+
+                    search_count_element = self.driver.find_elements_by_xpath("//div[@ng-repeat='item in sc.result']")
+                    search_result_max = len(search_count_element)
+
+                except NoSuchWindowException:
+                    self.gui.log("Error: Selected praise scrape failed. Window has been closed.\n")
+                    return
+                except WebDriverException:
+                    self.gui.log("Error: Selected praise scrape failed. Chrome not reachable.\n")
+                    return
+                except AttributeError:
+                    self.gui.log("Error: Selected praise scrape failed. Element not found.\n")
+                    return
+
+            # Check if gui has been closed before continuing server calls
             if not self.gui.is_running:
                 return
 
-            time_element = selected_element.find_element_by_xpath(
-                "./../../../../../../../../../../../../../../../../../../../"
-                "/div/div/div/span[@data-tid='messageTimeStamp']")
-            time_value = time_element.get_attribute("title")
-
-            result = '0'
+            # Initialize variable before if statements to suppress reference warning
+            result = "0"
 
             # Split any praises that have multiple names
             if "," in praised_name:
@@ -360,7 +400,8 @@ class Bot(threading.Thread):
                 break
 
             # Stop at the very first praise
-            if praiser_name == "Zachary Blodgett" and praised_name == "Andre Le":
+            if (search_result_index + 1) >= search_result_max:
+                self.gui.log("Last praise found. Praise scraping stopped.\n")
                 break
 
             search_result_index += 1
@@ -368,7 +409,7 @@ class Bot(threading.Thread):
         # Update last updated time
         self.do_update_time()
 
-        # Calculate next refresh time based on attributes.
+        # Calculate next refresh time based on limits.
         # Random value between low and high used for countdown.
         seconds_low = self._refresh_minutes_low * 60
         seconds_high = self._refresh_minutes_high * 60
@@ -388,7 +429,10 @@ class Bot(threading.Thread):
         """
         while self.gui.is_running:
             if self._secret_key == "":
-                self.gui.log("ERROR: Secret key not initialized. Stopping bot thread.\n")
+                self.gui.log("Secret key not initialized. Stopping bot thread.\n")
+                return
+            if not self.is_open():
+                self.gui.log("Chrome browser closed. Stopping bot thread.\n")
                 return
             if self._countdown > 0:
                 time.sleep(1)
@@ -397,6 +441,18 @@ class Bot(threading.Thread):
             if not self.do_update():
                 break
 
+    def is_open(self):
+        """
+        Check if browser open by checking if title available.
+        Used in bot loop to end bot if browser closed by user.
+        :return: boolean True if open False if not
+        """
+        try:
+            if self.driver.title:
+                return True
+        except (NoSuchWindowException, AttributeError, InvalidSessionIdException):
+            return False
+
     def run(self):
         """
         Run method for bot threading object. Will remain alive
@@ -404,12 +460,9 @@ class Bot(threading.Thread):
         gui is no longer alive, run log reaches end and quits.
         """
 
-        # Start bot console messages.
-        # Temporary delay added to wait for gui to load.
-        # Adding buttons will fix this later.
-        time.sleep(1)
-        if not self.gui.log("Initializing chromedriver ... "):
-            return
+        # Start bot console messages
+        self.gui.log("Starting bot ... successful\n")
+        self.gui.log("Initializing chromedriver ... ")
 
         # Initialize chromedriver object
         # Will download required chromedriver
@@ -418,7 +471,8 @@ class Bot(threading.Thread):
         if not self.gui.log(str(self.chromedriver.version) + " installed\n", False):
             return
 
-        # Initialize driver options
+        # Initialize driver options using default profile to retain settings
+        # Settings needed for Teams access after server owner logs in
         options = webdriver.ChromeOptions()
         options.add_argument("user-data-dir=" + os.getenv("LOCALAPPDATA") + "\\Google\\Chrome\\User Data")
         options.add_argument("user-profile=Default")
@@ -429,12 +483,12 @@ class Bot(threading.Thread):
             self.driver = webdriver.Chrome(self.chromedriver.filepath, chrome_options=options)
             self.driver.get(self._initial_page)
         except InvalidArgumentException:
-            self.gui.log("ERROR: Close all Chrome browsers and restart application\n")
+            self.gui.log("Error: Close all Chrome browsers and restart application\n")
             self.driver = None
             return
         except SessionNotCreatedException:
             self.driver = None
-            self.gui.log("ERROR: Session not created. Driver failed to initialize\n")
+            self.gui.log("Error: Session not created. Driver failed to initialize\n")
             return
 
         # Check if gui running in case closed before setting value
@@ -451,7 +505,11 @@ class Bot(threading.Thread):
         self.start_bot_loop()
 
         # When run ends, thread ends. Clean driver
-        self.driver.quit()
+        try:
+            self.driver.quit()
+        except AttributeError:
+            # Driver already set to None
+            pass
 
         # Set driver to default state
         self.driver = None

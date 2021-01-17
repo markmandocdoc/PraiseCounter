@@ -30,10 +30,9 @@ class Chromedriver:
         self.filepath = self.download_chromedriver(self)
 
     @staticmethod
-    def get_chromedriver_url(self, version):
+    def get_chromedriver_url(version):
         """
         Generates the chromedriver download URL for Windows
-        :param self: self
         :param version: chromedriver version string
         :return: Download URL for chromedriver
         """
@@ -71,7 +70,12 @@ class Chromedriver:
         )
 
         # 0 index of communicate output is stdout
-        return process.communicate()[0].decode("UTF-8").strip().split()[-1]
+        chrome_version = process.communicate()[0].decode("UTF-8").strip().split()[-1]
+
+        # End process used to retrieve Chrome version via shell commands
+        process.kill()
+
+        return chrome_version
 
     @staticmethod
     def get_major_version(version):

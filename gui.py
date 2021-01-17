@@ -2,6 +2,7 @@
 
 import tkMessageBox
 from Tkinter import *
+from bot import Bot
 import threading
 import datetime
 import sys
@@ -37,7 +38,12 @@ class Gui(threading.Thread):
 
         # Setup frame
         self.root.frame = Frame(self.root, bd=0)
-        self.root.frame.pack(expand=1)
+        self.root.frame.pack(expand=1, side="left")
+
+        self.countdown = 0
+        # self.status_label = Label(
+        #     self.root.frame, text="Refresh in 300 seconds")
+        # self.status_label.pack(side="top", padx=(0,0), pady=(5,0), ipadx=5, ipady=3, fill="x")
 
         # Console label
         self.console_label = Label(
@@ -45,7 +51,7 @@ class Gui(threading.Thread):
 
         # Console text area
         self.console_text_frame = Frame(self.root.frame)
-        self.console_text_frame.pack(side="top", expand="yes", fill="x", padx=10, pady=(5, 10))
+        self.console_text_frame.pack(side="top", expand="yes", fill="x", padx=10, pady=(10, 10))
 
         # Vertical Scroll Bar
         self.console_y_scroll_bar = Scrollbar(self.console_text_frame)
@@ -60,19 +66,20 @@ class Gui(threading.Thread):
         # Configure the scrollbars
         self.console_y_scroll_bar.config(command=self.console_text_area.yview)
 
-        # Initialize countdown variables
-        self.countdown = 0
-        self.countdown_label = Label(
-            self.root.frame,
-            text=""
-        )
-        self.countdown_label.pack(fill="x")
+        # Initialize buttons and status label - Settings, Status, Start
+        self.settings_button = Button(
+            self.root.frame, text="Settings", width=28, height=2, command=self.start_stop_bot)
+        self.settings_button.pack(side="left", padx=(10, 5), pady=(5, 10), fill="x")
 
-        self.update_countdown()
+        self.start_stop_button = Button(
+            self.root.frame, text="Start", width=28, height=2, command=self.start_stop_bot)
+        self.start_stop_button.pack(side="left", padx=(5, 10), pady=(5, 10), fill="x")
+
+        # self.update_countdown()
 
         # Threading.start method to start thread
         # Will also execute run() when started
-        self.start()
+        # self.start()
 
     def change_icon(self):
         """
@@ -95,18 +102,63 @@ class Gui(threading.Thread):
             return os.path.join(sys._MEIPASS, relative_path)
         return os.path.join(os.path.abspath("."), relative_path)
 
-    def update_countdown(self):
-        self.countdown = self.countdown - 1
-        if self.countdown < 0:
-            if self.secret_key_initialized:
-                countdown_text = 'Running refresh. Please wait ...'
-            else:
-                countdown_text = 'Initializing secret key ...'
-        else:
-            countdown_text = '{} seconds until next refresh.'.format(self.countdown)
+    # def update_countdown(self):
+    #     self.countdown = self.countdown - 1
+    #     if self.countdown < 0:
+    #         if self.secret_key_initialized:
+    #             countdown_text = 'Running refresh. Please wait ...'
+    #         else:
+    #             countdown_text = 'Initializing secret key ...'
+    #     else:
+    #         countdown_text = '{} seconds until next refresh.'.format(self.countdown)
+    #
+    #     self.status_label.configure(text=countdown_text)
+    #     self.root.after(1000, self.update_countdown)
 
-        self.countdown_label.configure(text=countdown_text)
-        self.root.after(1000, self.update_countdown)
+    def start_stop_bot(self):
+        """
+        Start or stop bot. Runtime error thrown if thread already started.
+        """
+        try:
+            if self.bot.is_open():
+
+                # Not in 'stop_bot()' to allow faster disabling of button
+                self.start_stop_button["text"] = "Stopping ..."
+                self.disable(self.start_stop_button)
+
+                # After disabling button, driver is closed. After driver
+                # closes successfully, buttons enabled and text changed.
+                self.root.after(10, self.stop_bot)
+
+        except AttributeError:
+            # Bot object set to none exception
+            self.start_bot()
+        except RuntimeError:
+            # Thread already running exception
+            pass
+
+    def start_bot(self):
+        """
+        Method called by start_stop_button to start bot.
+        It creates a new bot instance and sets circular
+        reference in gui and bot objects. After bot has
+        been started, button text changed to Stop.
+        """
+        self.bot = Bot()
+        self.bot.gui = self
+        self.bot.start()
+        self.start_stop_button["text"] = "Stop"
+
+    def stop_bot(self):
+        """
+        Method called by root.after to close driver and
+        change button text from Stopping to Start. Called
+        by root.after to allow root to update while closing.
+        """
+        self.bot.driver.quit()
+        self.bot = None
+        self.enable(self.start_stop_button)
+        self.start_stop_button["text"] = "Start"
 
     def log(self, text, timestamp=True):
         """
@@ -168,15 +220,14 @@ class Gui(threading.Thread):
             # Update required to show message in console log
             self.root.update()
             self.is_running = False
-            # self.root.after(100, self.close_gui_loop)
-            while self.bot.driver is not None:
+            try:
+                # Wait for bot driver to close
+                while self.bot.driver is not None:
+                    pass
+            except AttributeError:
+                # Bot stopped and set to None
                 pass
             self.root.destroy()
-
-    # def close_gui_loop(self):
-    #     if self.bot.driver is None and not self.bot.is_alive():
-    #         return
-    #     self.root.after(100, self.close_gui_loop)
 
     def run(self):
         """

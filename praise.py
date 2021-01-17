@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-from bot import Bot
 from gui import Gui
 
 
@@ -10,19 +9,10 @@ def main():
     """
 
     # Initialize and run gui. Gui contains console and buttons.
+    # Gui contains buttons to instantiate and start Bot object.
+    # Gui and Bot object circular reference set when bot started.
     gui = Gui()
-
-    # Initialize and run bot. Bot contains Selenium automation.
-    # Circular reference required for gui and bot to communicate
-    bot = Bot()
-
-    # Initialize bot and gui references in each others object.
-    # Allows bi-directional communication between bot and gui.
-    gui.bot = bot
-    bot.gui = gui
-
-    # Start automation
-    bot.start()
+    gui.start()
 
 
 if __name__ == '__main__':
