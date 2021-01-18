@@ -21,7 +21,7 @@ To set secret key:
 #secret_key:SECRET_KEY_USED_TO_ALLOW_WEB_SERVER_ACCESS
 ```
 
-## Executable:
+## Executable
 To build EXE:
 1. Install pyinstaller
 2. Launch CMD and navigate to project directory

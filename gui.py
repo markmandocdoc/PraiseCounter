@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 
 import tkMessageBox
+from ttk import Progressbar, Style
 from Tkinter import *
 from bot import Bot
 import threading
 import datetime
+# import ttk
 import sys
 import os
 
@@ -27,6 +29,13 @@ class Gui(threading.Thread):
         self.is_running = True
         self.secret_key_initialized = False
 
+        # Integer value of time till next refresh of search results
+        # Value is set after 'do_update()' completes scraping results.
+        # Reduces by 1 every second in gui loop while gui is running.
+        # If gui is no longer running, bot ends gui loop and thread.
+        self.countdown = 0
+        self.countdown_max = 0
+
         # Setup root
         self.root = Tk()
         self.root.geometry("+50+50")
@@ -37,13 +46,14 @@ class Gui(threading.Thread):
         self.root.protocol('WM_DELETE_WINDOW', self.confirm_quit)
 
         # Setup frame
-        self.root.frame = Frame(self.root, bd=0)
-        self.root.frame.pack(expand=1, side="left")
+        self.root.frame = Frame(self.root)
+        self.root.frame.pack(expand=1, side="top", fill="x")
 
-        self.countdown = 0
-        # self.status_label = Label(
-        #     self.root.frame, text="Refresh in 300 seconds")
-        # self.status_label.pack(side="top", padx=(0,0), pady=(5,0), ipadx=5, ipady=3, fill="x")
+        self.progress_frame = Frame(self.root)
+        self.progress_frame.pack(expand=1, side="top", fill="x")
+
+        self.button_frame = Frame(self.root)
+        self.button_frame.pack(expand=1, side="top", fill="x")
 
         # Console label
         self.console_label = Label(
@@ -66,20 +76,78 @@ class Gui(threading.Thread):
         # Configure the scrollbars
         self.console_y_scroll_bar.config(command=self.console_text_area.yview)
 
+        # Refresh timer progress bar
+        self.progress_bar_style = Style(self.root)
+        self.progress_bar_style.theme_use("default")
+        self.progress_bar = None
+        self.root.after(100, self.load_progress_bar)
+
         # Initialize buttons and status label - Settings, Status, Start
         self.settings_button = Button(
-            self.root.frame, text="Settings", width=28, height=2, command=self.start_stop_bot)
-        self.settings_button.pack(side="left", padx=(10, 5), pady=(5, 10), fill="x")
+            self.button_frame, text="Settings", width=28, height=2, command=self.start_stop_bot)
+        self.settings_button.pack(side="left", padx=(10, 5), pady=(10, 10), fill="x", expand=1)
 
         self.start_stop_button = Button(
-            self.root.frame, text="Start", width=28, height=2, command=self.start_stop_bot)
-        self.start_stop_button.pack(side="left", padx=(5, 10), pady=(5, 10), fill="x")
+            self.button_frame, text="Start", width=28, height=2, command=self.start_stop_bot)
+        self.start_stop_button.pack(side="left", padx=(5, 10), pady=(10, 10), fill="x", expand=1)
 
-        # self.update_countdown()
+    def load_progress_bar(self):
+        """
+        Load progress bar method used with root.after.
+        If root.after not used, gui will not load.
+        """
+        self.progress_bar_style.layout(
+            "progress_bar",
+            [
+                (
+                    "progress_bar.trough",
+                    {
+                        "children": [
+                            ("progress_bar.pbar", {"side": "left", "sticky": "ns"}),
+                            ("progress_bar.label", {"sticky": ""})
+                        ],
+                        "sticky": "nswe",
+                    }
+                )
+            ]
+        )
 
-        # Threading.start method to start thread
-        # Will also execute run() when started
-        # self.start()
+        self.progress_bar = Progressbar(self.progress_frame, orient="horizontal", style="progress_bar")
+        self.progress_bar.pack(expand=1, fill="x", side="left", padx=10, ipadx=3, ipady=3)
+        self.progress_bar["value"] = 0
+
+        self.progress_bar_style.configure(
+            "progress_bar", background="deepskyblue", font=('Helvetica', 8),
+            pbarrelief="flat", troughrelief="flat", troughcolor="ghostwhite")
+        self.update_progress_label("Press Start to Launch Automation")
+
+    def update_progress_bar(self, current_time, max_time):
+        """
+        Update progress bar using current and max time with percentage
+        :param current_time: integer current time till refresh in seconds
+        :param max_time: integer max time till refresh in seconds
+        """
+        try:
+            self.update_progress_label("{} seconds until next refresh".format(current_time))
+            self.progress_bar["value"] = ((max_time-current_time)/float(max_time))*100
+        except TclError:
+            # Invalid command name "configure" for progress_bar["value"]
+            pass
+
+    def update_progress_label(self, text):
+        """
+        Wrapper used to call actual method using root.after
+        :param text: string text used for progress label
+        """
+        self.root.after(100, lambda: self.update_progress_label_after(text))
+
+    def update_progress_label_after(self, text):
+        """
+        Set progress bar label text. Must be called using root.after
+        :param text: string text used for progress label
+        """
+        # Spaces added after text to center string on progress bar
+        self.progress_bar_style.configure("progress_bar", text="{}     ".format(text))
 
     def change_icon(self):
         """
@@ -101,19 +169,6 @@ class Gui(threading.Thread):
             # noinspection PyProtectedMember
             return os.path.join(sys._MEIPASS, relative_path)
         return os.path.join(os.path.abspath("."), relative_path)
-
-    # def update_countdown(self):
-    #     self.countdown = self.countdown - 1
-    #     if self.countdown < 0:
-    #         if self.secret_key_initialized:
-    #             countdown_text = 'Running refresh. Please wait ...'
-    #         else:
-    #             countdown_text = 'Initializing secret key ...'
-    #     else:
-    #         countdown_text = '{} seconds until next refresh.'.format(self.countdown)
-    #
-    #     self.status_label.configure(text=countdown_text)
-    #     self.root.after(1000, self.update_countdown)
 
     def start_stop_bot(self):
         """
@@ -155,10 +210,30 @@ class Gui(threading.Thread):
         change button text from Stopping to Start. Called
         by root.after to allow root to update while closing.
         """
-        self.bot.driver.quit()
-        self.bot = None
-        self.enable(self.start_stop_button)
-        self.start_stop_button["text"] = "Start"
+        try:
+            self.bot.driver.quit()
+            self.bot = None
+            self.enable(self.start_stop_button)
+            self.start_stop_button["text"] = "Start"
+            self.update_progress_label("Automation stopped")
+        except (AttributeError, TclError):
+            # Bot has already been closed
+            pass
+
+    def start_refresh_countdown(self):
+        self.root.after(100, self.refresh_countdown)
+
+    def refresh_countdown(self):
+        if self.bot is None:
+            self.update_progress_label("Automation stopped")
+            return
+
+        if self.countdown > 0:
+            self.countdown = self.countdown - 1
+            self.root.after(100, lambda: self.update_progress_bar(self.countdown, self.countdown_max))
+            self.root.after(1000, self.refresh_countdown)
+        else:
+            self.update_progress_label("Running refresh automation ...")
 
     def log(self, text, timestamp=True):
         """
@@ -194,7 +269,8 @@ class Gui(threading.Thread):
         try:
             widget.config(state="normal")
         except tkinter.TclError:
-            print "Widget not found"
+            # Widget not found exception
+            pass
 
     @staticmethod
     def disable(widget):
@@ -206,7 +282,8 @@ class Gui(threading.Thread):
         try:
             widget.config(state="disabled")
         except tkinter.TclError:
-            print "Widget not found"
+            # Widget not found exception
+            pass
 
     def confirm_quit(self):
         """

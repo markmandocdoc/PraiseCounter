@@ -33,12 +33,6 @@ class Bot(threading.Thread):
         # Name of server owner. Will be used to find secret key
         self._server_owner = "Mark Mandocdoc"
 
-        # Integer value of time till next refresh of search results
-        # Value is set after 'do_update()' completes scraping results.
-        # Reduces by 1 every second in gui loop while gui is running.
-        # If gui is no longer running, bot ends gui loop and thread.
-        self._countdown = 0
-
         # Max number of praises to skip until next refresh.
         # During 'do_update()', an attempt is made to add praise.
         # If praise exists, 'duplicate_count' increases by one.
@@ -88,14 +82,14 @@ class Bot(threading.Thread):
                 search_input_field.send_keys('#secret_key')
                 search_input_field.send_keys(Keys.ENTER)
             except NoSuchElementException:
-                self.gui.log("ERROR: Search bar not found. Retrying in 1 second ...\n")
+                self.gui.log("Error: Search bar not found. Retrying in 1 second ...\n")
                 time.sleep(1)
                 continue
             except AttributeError:
-                self.gui.log("ERROR: Secret key initialization failed. Element not found.\n")
+                self.gui.log("Error: Secret key initialization failed. Element not found.\n")
                 return
             except WebDriverException:
-                self.gui.log("ERROR: Secret key initialization failed. Chrome not reachable.\n")
+                self.gui.log("Error: Secret key initialization failed. Chrome not reachable.\n")
                 return
             break
 
@@ -109,20 +103,20 @@ class Bot(threading.Thread):
                 self._secret_key = search_result_text.split("#secret_key:")[1]
             except NoSuchElementException:
                 self.gui.log("failure\n", False)
-                self.gui.log("ERROR: Secret key not found. Retrying in 1 second ...\n")
+                self.gui.log("Error: Secret key not found. Retrying in 1 second ...\n")
                 time.sleep(1)
                 continue
             except AttributeError:
                 self.gui.log("failure\n", False)
-                self.gui.log("ERROR: Secret key private message not found.\n")
+                self.gui.log("Error: Secret key private message not found.\n")
                 return
             except NoSuchWindowException:
                 self.gui.log("failure\n", False)
-                self.gui.log("ERROR: Window closed before secret key can be located.\n")
+                self.gui.log("Error: Window closed before secret key can be located.\n")
                 return
             except WebDriverException:
                 self.gui.log("failure\n", False)
-                self.gui.log("ERROR: Secret key could not be be initialized. Chrome not reachable.\n")
+                self.gui.log("Error: Secret key could not be be initialized. Chrome not reachable.\n")
                 return
             break
         self.gui.secret_key_initialized = True
@@ -177,9 +171,9 @@ class Bot(threading.Thread):
         elif r.content == "1":
             print_text = "New Praise. Database has been updated.\n"
         elif r.status_code != 200:
-            print_text = "ERROR: Cannot connect to server.\n"
+            print_text = "Error: Cannot connect to server.\n"
         else:
-            print_text = "ERROR: Something bad happened.\n"
+            print_text = "Error: Something bad happened.\n"
 
         self.gui.log(print_text)
 
@@ -217,15 +211,15 @@ class Bot(threading.Thread):
             self.gui.log("successful\n", False)
         except NoSuchWindowException:
             self.gui.log("failure\n", False)
-            self.gui.log("ERROR: Unable to refresh search results. Window has been closed.\n")
+            self.gui.log("Error: Unable to refresh search results. Window has been closed.\n")
             return False
         except WebDriverException:
             self.gui.log("failure\n", False)
-            self.gui.log("ERROR: Unable to refresh search results. Send keys failed.\n")
+            self.gui.log("Error: Unable to refresh search results. Send keys failed.\n")
             return False
         except AttributeError:
             self.gui.log("failure\n", False)
-            self.gui.log("ERROR: Unable to refresh search results. Search field not found.\n")
+            self.gui.log("Error: Unable to refresh search results. Search field not found.\n")
             return False
         return True
 
@@ -414,10 +408,12 @@ class Bot(threading.Thread):
         seconds_low = self._refresh_minutes_low * 60
         seconds_high = self._refresh_minutes_high * 60
         num_seconds = randrange(seconds_low, seconds_high)
-        self.gui.countdown = num_seconds
-        self._countdown = num_seconds
 
         self.gui.log("Next refresh in {} seconds\n".format(num_seconds))
+
+        self.gui.countdown = num_seconds
+        self.gui.countdown_max = num_seconds
+        self.gui.start_refresh_countdown()
 
         return True
 
@@ -434,9 +430,8 @@ class Bot(threading.Thread):
             if not self.is_open():
                 self.gui.log("Chrome browser closed. Stopping bot thread.\n")
                 return
-            if self._countdown > 0:
+            if self.gui.countdown > 0:
                 time.sleep(1)
-                self._countdown = self._countdown - 1
                 continue
             if not self.do_update():
                 break
@@ -450,7 +445,7 @@ class Bot(threading.Thread):
         try:
             if self.driver.title:
                 return True
-        except (NoSuchWindowException, AttributeError, InvalidSessionIdException):
+        except (NoSuchWindowException, AttributeError, InvalidSessionIdException, MaxRetryError, WebDriverException):
             return False
 
     def run(self):
@@ -461,6 +456,7 @@ class Bot(threading.Thread):
         """
 
         # Start bot console messages
+        self.gui.update_progress_label("Initializing ...")
         self.gui.log("Starting bot ... successful\n")
         self.gui.log("Initializing chromedriver ... ")
 
@@ -484,11 +480,11 @@ class Bot(threading.Thread):
             self.driver.get(self._initial_page)
         except InvalidArgumentException:
             self.gui.log("Error: Close all Chrome browsers and restart application\n")
-            self.driver = None
+            self.gui.stop_bot()
             return
         except SessionNotCreatedException:
-            self.driver = None
             self.gui.log("Error: Session not created. Driver failed to initialize\n")
+            self.gui.stop_bot()
             return
 
         # Check if gui running in case closed before setting value
@@ -504,12 +500,6 @@ class Bot(threading.Thread):
         # Gui loop keeps run thread alive. Ends when gui not running.
         self.start_bot_loop()
 
-        # When run ends, thread ends. Clean driver
-        try:
-            self.driver.quit()
-        except AttributeError:
-            # Driver already set to None
-            pass
-
-        # Set driver to default state
-        self.driver = None
+        # Signal gui bot is stopped
+        # Changes Stop button to Start
+        self.gui.stop_bot()
